@@ -23,7 +23,7 @@ public class ClientHandler implements Runnable {
 					uploading(out, in);
 				}
 				if ("download".equals(command)) {
-					// TODO: 13.05.2021 downloading
+					downloading(out,in);
 				}
 				if ("exit".equals(command)) {
 					out.writeUTF("DONE");
@@ -39,6 +39,39 @@ public class ClientHandler implements Runnable {
 		}
 		catch (Exception e) {
 			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * Sending file to a client
+	 * @param out DataOutputStream
+	 * @param in DataInputStream
+	 */
+	private void downloading(DataOutputStream out, DataInputStream in) {
+		try {
+			File file = new File("server/" + in.readUTF());
+			if (!file.exists()) {
+				throw new FileNotFoundException();
+			}
+
+			long fileLength = file.length();
+			FileInputStream fis = new FileInputStream(file);
+
+			out.writeLong(fileLength);
+
+			int read = 0;
+			byte[] buffer = new byte[8 * 1024];
+			while ((read = fis.read(buffer)) != -1) {
+				out.write(buffer, 0, read);
+			}
+			out.flush();
+			out.writeUTF("OK");
+		} catch (IOException e) {
+			try {
+				out.writeUTF("WRONG");
+			} catch (IOException ioException) {
+				ioException.printStackTrace();
+			}
 		}
 	}
 
