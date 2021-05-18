@@ -125,14 +125,26 @@ public class NioTelnetServer {
 
     private void copy(String command, Selector selector, SocketAddress client) throws IOException {
         String[] commands = command.split(" ");
-        if(command.length()!=3){
+        if(commands.length!=3){
             sendMessage("wrong command", selector, client);
+            return;
         }else {
             Path srcPath = Path.of("server", commands[1]);
             Path dstPath = Path.of("server", commands[2]);
             if (!Files.exists(srcPath)){
                 sendMessage("src file doesn't exist", selector, client);
+                return;
             }
+            if(!Files.exists(dstPath)){
+                Files.createFile(dstPath);
+            }
+            Files.newBufferedReader(srcPath).lines().forEach(m -> {
+                try {
+                    Files.write(dstPath,m.getBytes(StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            });
         }
 
     }
