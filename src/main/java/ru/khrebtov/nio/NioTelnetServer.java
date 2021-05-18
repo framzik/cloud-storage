@@ -10,10 +10,7 @@ import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
+import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 
 public class NioTelnetServer {
@@ -25,6 +22,7 @@ public class NioTelnetServer {
     public static final String CAT_COMMAND = "\tcat [filename]   view content\n";
     public static final String MKDIR_COMMAND = "\tmkdir    create directory\n";
     public static final String CHANGE_NICKNAME = "\tnick    change nickname\n";
+    private String startPath = "server";
 
 	private final ByteBuffer buffer = ByteBuffer.allocate(512);
 
@@ -76,17 +74,6 @@ public class NioTelnetServer {
 
 		buffer.clear();
 
-		// TODO
-		// touch [filename] - создание файла
-		// mkdir [dirname] - создание директории
-		// cd [path] - перемещение по каталогу (.. | ~ )
-		// rm [filename | dirname] - удаление файла или папки
-		// copy [src] [target] - копирование файла или папки
-		// cat [filename] - просмотр содержимого
-		// вывод nickname в начале строки
-
-		// NIO
-		// NIO telnet server
 
 		if (key.isValid()) {
 			String command = sb
@@ -115,6 +102,8 @@ public class NioTelnetServer {
                 cat(command, selector, client);
             } else if (command.startsWith("copy")) {
                 copy(command, selector, client);
+            } else if (command.startsWith("cd")) {
+                cd(command, selector, client);
             } else if ("exit".equals(command)) {
                 System.out.println("Client logged out. IP: " + channel.getRemoteAddress());
                 channel.close();
@@ -123,15 +112,31 @@ public class NioTelnetServer {
         }
     }
 
+    private void cd(String command, Selector selector, SocketAddress client) throws IOException {
+        String[] commands = command.split(" ");
+        if ("~".equals(commands[1])) {
+            startPath = Path.of(System.getProperty("user.dir")).toString();
+            sendMessage(" ", selector, client);
+        } else if ("..".equals(commands[1])) {
+            String absolutePath = Path.of(startPath).toAbsolutePath().toString();
+            startPath = absolutePath.substring(0, absolutePath.lastIndexOf(92) + 1); //обрезаю путь по последний символ / включительно
+            sendMessage(" ", selector, client);
+        } else {
+            startPath = Path.of(startPath,commands[1]).toAbsolutePath().toString();
+            sendMessage(" ", selector, client);
+        }
+
+    }
+
     private void copy(String command, Selector selector, SocketAddress client) throws IOException {
         String[] commands = command.split(" ");
         if(commands.length!=3){
             sendMessage("wrong command", selector, client);
             return;
-        }else {
-            Path srcPath = Path.of("server", commands[1]);
-            Path dstPath = Path.of("server", commands[2]);
-            if (!Files.exists(srcPath)){
+        } else {
+            Path srcPath = Path.of(startPath, commands[1]);
+            Path dstPath = Path.of(startPath, commands[2]);
+            if (!Files.exists(srcPath)) {
                 sendMessage("src file doesn't exist", selector, client);
                 return;
             }
@@ -140,18 +145,19 @@ public class NioTelnetServer {
             }
             Files.newBufferedReader(srcPath).lines().forEach(m -> {
                 try {
-                    Files.write(dstPath,m.getBytes(StandardCharsets.UTF_8));
+                    Files.writeString(dstPath, m + System.lineSeparator(), StandardOpenOption.APPEND);
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
             });
+            sendMessage(String.format("content copied from %s file to %s file", commands[1], commands[2]), selector, client);
         }
 
     }
 
     private void cat(String command, Selector selector, SocketAddress client) throws IOException {
         String[] commands = command.split(" ");
-        Path newPath = Path.of("server", commands[1]);
+        Path newPath = Path.of(startPath, commands[1]);
 
         Files.newBufferedReader(newPath).lines().forEach(m -> {
             try {
@@ -164,7 +170,7 @@ public class NioTelnetServer {
 
     private void mkdir(Selector selector, SocketAddress client, String command) throws IOException {
         String[] commands = command.split(" ");
-        Path newPath = Path.of("server", commands[1]);
+        Path newPath = Path.of(startPath, commands[1]);
         if (!Files.exists(newPath)) {
             Files.createDirectories(newPath);
             sendMessage("directory is created", selector, client);
@@ -175,10 +181,10 @@ public class NioTelnetServer {
 
     private void touch(Selector selector, SocketAddress client, String command) throws IOException {
         String[] commands = command.split(" ");
-        Path newPath = Path.of("server", commands[1]);
+        Path newPath = Path.of(startPath, commands[1]);
         if (!Files.exists(newPath)) {
             Files.createFile(newPath);
-            sendMessage("file is created", selector, client);
+            sendMessage("file was created", selector, client);
         } else {
             sendMessage("file is already exists", selector, client);
         }
@@ -186,7 +192,7 @@ public class NioTelnetServer {
 
     private void delete(String command, Selector selector, SocketAddress client) throws IOException {
         String[] commands = command.split(" ");
-        Path newPath = Path.of("server", commands[1]);
+        Path newPath = Path.of(startPath, commands[1]);
         if (Files.exists(newPath)) {
             if (!Files.isDirectory(newPath)) {
                 Files.delete(newPath);
@@ -214,26 +220,31 @@ public class NioTelnetServer {
         return String.join(" ", new File("server").list());
     }
 
-	private void sendMessage(String message, Selector selector, SocketAddress client) throws IOException {
-		for (SelectionKey key : selector.keys()) {
-			if (key.isValid() && key.channel() instanceof SocketChannel) {
-				if (((SocketChannel)key.channel()).getRemoteAddress().equals(client)) {
-					((SocketChannel)key.channel())
-							.write(ByteBuffer.wrap(message.getBytes(StandardCharsets.UTF_8)));
-				}
-			}
-		}
-	}
+    private void sendMessage(String message, Selector selector, SocketAddress client) throws IOException {
+        for (SelectionKey key : selector.keys()) {
+            if (key.isValid() && key.channel() instanceof SocketChannel) {
+                if (((SocketChannel) key.channel()).getRemoteAddress().equals(client)) {
+                    String path = Path.of(startPath).toAbsolutePath().toString() + "\\: ";
+                    ((SocketChannel) key.channel())
+                            .write(ByteBuffer.wrap(path.getBytes(StandardCharsets.UTF_8)));
+                    ((SocketChannel) key.channel())
+                            .write(ByteBuffer.wrap(message.getBytes(StandardCharsets.UTF_8)));
+                }
+            }
+        }
+    }
 
 	private void handleAccept(SelectionKey key, Selector selector) throws IOException {
 		SocketChannel channel = ((ServerSocketChannel) key.channel()).accept();
 		channel.configureBlocking(false);
 		System.out.println("Client accepted. IP: " + channel.getRemoteAddress());
 
-		channel.register(selector, SelectionKey.OP_READ, "some attach");
-		channel.write(ByteBuffer.wrap("Hello user!\n".getBytes(StandardCharsets.UTF_8)));
-		channel.write(ByteBuffer.wrap("Enter --help for support info\n".getBytes(StandardCharsets.UTF_8)));
-	}
+        channel.register(selector, SelectionKey.OP_READ, "some attach");
+        channel.write(ByteBuffer.wrap("Hello user!\n".getBytes(StandardCharsets.UTF_8)));
+        channel.write(ByteBuffer.wrap("Enter --help for support info\n".getBytes(StandardCharsets.UTF_8)));
+        String path = Path.of(startPath).toAbsolutePath().toString() + "\\: ";
+        channel.write(ByteBuffer.wrap(path.getBytes(StandardCharsets.UTF_8)));
+    }
 
 	public static void main(String[] args) throws IOException {
 		new NioTelnetServer();
