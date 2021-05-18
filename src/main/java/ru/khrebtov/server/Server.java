@@ -1,4 +1,4 @@
-package com.polozov.server;
+package ru.khrebtov.server;
 
 import java.net.ServerSocket;
 import java.net.Socket;

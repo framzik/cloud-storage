@@ -1,4 +1,4 @@
-package com.polozov.client;
+package ru.khrebtov.client;
 
 import javax.swing.*;
 import java.awt.*;
