@@ -94,16 +94,22 @@ public class NioTelnetServer {
                 sendMessage(getFileList().concat("\n"), selector, client);
             } else if (command.startsWith("touch")) {
                 touch(selector, client, command);
+                sendMessage(" \n", selector, client);
             } else if (command.startsWith("mkdir")) {
                 mkdir(selector, client, command);
+                sendMessage(" \n", selector, client);
             } else if (command.startsWith("rm")) {
                 delete(command, selector, client);
+                sendMessage(" \n", selector, client);
             } else if (command.startsWith("cat")) {
                 cat(command, selector, client);
+                sendMessage(" \n", selector, client);
             } else if (command.startsWith("copy")) {
                 copy(command, selector, client);
+                sendMessage(" \n", selector, client);
             } else if (command.startsWith("cd")) {
                 cd(command, selector, client);
+                sendMessage(" \n", selector, client);
             } else if ("exit".equals(command)) {
                 System.out.println("Client logged out. IP: " + channel.getRemoteAddress());
                 channel.close();
@@ -112,126 +118,171 @@ public class NioTelnetServer {
         }
     }
 
-    private void cd(String command, Selector selector, SocketAddress client) throws IOException {
+    private void cd(String command, Selector selector, SocketAddress client) {
         String[] commands = command.split(" ");
-        if ("~".equals(commands[1])) {
-            startPath = Path.of(System.getProperty("user.dir")).toString();
-            sendMessage(" ", selector, client);
-        } else if ("..".equals(commands[1])) {
-            String absolutePath = Path.of(startPath).toAbsolutePath().toString();
-            startPath = absolutePath.substring(0, absolutePath.lastIndexOf(92) + 1); //обрезаю путь по последний символ / включительно
-            sendMessage(" ", selector, client);
-        } else {
-            startPath = Path.of(startPath,commands[1]).toAbsolutePath().toString();
-            sendMessage(" ", selector, client);
-        }
-
+            if ("~".equals(commands[1])) {
+                startPath = "server";
+                sendMessage(" \n", selector, client);
+            } else if ("..".equals(commands[1])) {
+                String absolutePath = Path.of(startPath).toAbsolutePath().toString();
+                String shortenedPath = absolutePath.substring(0, absolutePath.lastIndexOf(92) + 1); //обрезаю путь по последний символ / включительно
+                if(shortenedPath.length()<=Path.of("server").toAbsolutePath().toString().length()){
+                    startPath = "server";
+                }
+                sendMessage(" \n", selector, client);
+            } else {
+                startPath = Path.of(startPath,commands[1]).toAbsolutePath().toString();
+                sendMessage(" \n", selector, client);
+            }
     }
 
-    private void copy(String command, Selector selector, SocketAddress client) throws IOException {
+    private void copy(String command, Selector selector, SocketAddress client)  {
         String[] commands = command.split(" ");
-        if(commands.length!=3){
-            sendMessage("wrong command", selector, client);
-            return;
-        } else {
-            Path srcPath = Path.of(startPath, commands[1]);
-            Path dstPath = Path.of(startPath, commands[2]);
-            if (!Files.exists(srcPath)) {
-                sendMessage("src file doesn't exist", selector, client);
+        try{
+            if(commands.length!=3){
+                sendMessage("wrong command\n", selector, client);
                 return;
+            } else {
+                Path srcPath = Path.of(startPath, commands[1]);
+                Path dstPath = Path.of(startPath, commands[2]);
+                if (!Files.exists(srcPath)) {
+                    sendMessage("src file doesn't exist\n", selector, client);
+                    return;
+                }
+                if (Files.isDirectory(srcPath)) {
+                    copyDyr(srcPath, dstPath,selector,client);
+                    sendMessage(String.format("content copied from dir: %s to dir: %s \n",
+                            commands[1], commands[2]), selector, client);
+                } else {
+                    Files.copy(srcPath, dstPath, StandardCopyOption.REPLACE_EXISTING);
+                    sendMessage(String.format("content copied from %s file to %s file\n",
+                            commands[1], commands[2]), selector, client);
+                }
             }
+        }catch (IOException e) {
+            sendMessage("wrong command\n", selector, client);
+        }
+    }
+
+    private void copyDyr(Path srcPath, Path dstPath,Selector selector, SocketAddress client) {
+        try{
             if(!Files.exists(dstPath)){
-                Files.createFile(dstPath);
+                Files.createDirectory(dstPath);
             }
-            Files.newBufferedReader(srcPath).lines().forEach(m -> {
-                try {
-                    Files.writeString(dstPath, m + System.lineSeparator(), StandardOpenOption.APPEND);
-                } catch (IOException e) {
-                    e.printStackTrace();
+            Files.walkFileTree(srcPath, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                    Path newDir = dstPath.resolve(srcPath.relativize(dir));
+                    Files.copy(dir, newDir, StandardCopyOption.REPLACE_EXISTING);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    Files.copy(file, dstPath.resolve(srcPath.relativize(file)));
+                    return FileVisitResult.CONTINUE;
                 }
             });
-            sendMessage(String.format("content copied from %s file to %s file", commands[1], commands[2]), selector, client);
+        }catch (IOException e){
+            sendMessage("wrong command\n", selector, client);
         }
-
     }
 
-    private void cat(String command, Selector selector, SocketAddress client) throws IOException {
+    private void cat(String command, Selector selector, SocketAddress client)  {
         String[] commands = command.split(" ");
         Path newPath = Path.of(startPath, commands[1]);
+        try {
+//            Files.newBufferedReader(newPath).lines().forEach(m -> {
+//                sendMessage(m + System.lineSeparator(), selector, client);
+//            });
+            byte[] bytes = Files.readAllBytes(newPath);
+          sendMessage(new String(bytes,StandardCharsets.UTF_8)+"\n",selector,client);
+        } catch (IOException e) {
+            sendMessage("wrong command\n", selector, client);
+        }
+    }
 
-        Files.newBufferedReader(newPath).lines().forEach(m -> {
+    private void mkdir(Selector selector, SocketAddress client, String command)  {
+        String[] commands = command.split(" ");
+        Path newPath = Path.of(startPath, commands[1]);
+        if (!Files.exists(newPath)) {
             try {
-                sendMessage(m + System.lineSeparator(), selector, client);
+                Files.createDirectories(newPath);
             } catch (IOException e) {
-                e.printStackTrace();
+                sendMessage("wrong command\n", selector, client);
             }
-        });
-    }
-
-    private void mkdir(Selector selector, SocketAddress client, String command) throws IOException {
-        String[] commands = command.split(" ");
-        Path newPath = Path.of(startPath, commands[1]);
-        if (!Files.exists(newPath)) {
-            Files.createDirectories(newPath);
-            sendMessage("directory is created", selector, client);
+            sendMessage("directory is created\n", selector, client);
         } else {
-            sendMessage("directory is already exists", selector, client);
+            sendMessage("directory is already exists\n", selector, client);
         }
     }
 
-    private void touch(Selector selector, SocketAddress client, String command) throws IOException {
+    private void touch(Selector selector, SocketAddress client, String command)  {
         String[] commands = command.split(" ");
         Path newPath = Path.of(startPath, commands[1]);
         if (!Files.exists(newPath)) {
-            Files.createFile(newPath);
-            sendMessage("file was created", selector, client);
+            try {
+                Files.createFile(newPath);
+            } catch (IOException e) {
+                sendMessage("wrong command\n", selector, client);
+            }
+            sendMessage("file was created\n", selector, client);
         } else {
-            sendMessage("file is already exists", selector, client);
+            sendMessage("file is already exists\n", selector, client);
         }
     }
 
-    private void delete(String command, Selector selector, SocketAddress client) throws IOException {
+    private void delete(String command, Selector selector, SocketAddress client)  {
         String[] commands = command.split(" ");
         Path newPath = Path.of(startPath, commands[1]);
-        if (Files.exists(newPath)) {
-            if (!Files.isDirectory(newPath)) {
-                Files.delete(newPath);
-                sendMessage("file was deleted", selector, client);
-            } else {
-                Files.walkFileTree(newPath, new SimpleFileVisitor<Path>() {
-                    @Override
-                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                        Files.delete(file);
-                        return FileVisitResult.CONTINUE;
-                    }
+        try{
+            if (Files.exists(newPath)) {
+                if (!Files.isDirectory(newPath)) {
+                    Files.delete(newPath);
+                    sendMessage("file was deleted\n", selector, client);
+                } else {
+                    Files.walkFileTree(newPath, new SimpleFileVisitor<Path>() {
+                        @Override
+                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                            Files.delete(file);
+                            return FileVisitResult.CONTINUE;
+                        }
 
-                    @Override
-                    public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                        Files.delete(dir);
-                        return FileVisitResult.CONTINUE;
-                    }
-                });
-                sendMessage("directory was deleted", selector, client);
-            }
-        } else sendMessage("directory/file doesn't exists", selector, client);
+                        @Override
+                        public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                            Files.delete(dir);
+                            return FileVisitResult.CONTINUE;
+                        }
+                    });
+                    sendMessage("directory was deleted\n", selector, client);
+                }
+            } else sendMessage("directory/file doesn't exists\n", selector, client);
+        }catch (IOException e){
+            sendMessage("wrong command\n", selector, client);
+        }
     }
 
     private String getFileList() {
         return String.join(" ", new File("server").list());
     }
 
-    private void sendMessage(String message, Selector selector, SocketAddress client) throws IOException {
-        for (SelectionKey key : selector.keys()) {
-            if (key.isValid() && key.channel() instanceof SocketChannel) {
-                if (((SocketChannel) key.channel()).getRemoteAddress().equals(client)) {
-                    String path = Path.of(startPath).toAbsolutePath().toString() + "\\: ";
-                    ((SocketChannel) key.channel())
-                            .write(ByteBuffer.wrap(path.getBytes(StandardCharsets.UTF_8)));
-                    ((SocketChannel) key.channel())
-                            .write(ByteBuffer.wrap(message.getBytes(StandardCharsets.UTF_8)));
+    private void sendMessage(String message, Selector selector, SocketAddress client)  {
+	    try{
+            for (SelectionKey key : selector.keys()) {
+                if (key.isValid() && key.channel() instanceof SocketChannel) {
+                    if (((SocketChannel) key.channel()).getRemoteAddress().equals(client)) {
+                        String path = Path.of(startPath).toAbsolutePath() + "\\: \n";
+                        ((SocketChannel) key.channel())
+                                .write(ByteBuffer.wrap(path.getBytes(StandardCharsets.UTF_8)));
+                        ((SocketChannel) key.channel())
+                                .write(ByteBuffer.wrap(message.getBytes(StandardCharsets.UTF_8)));
+                    }
                 }
             }
+        }catch (IOException e){
+	        e.printStackTrace();
         }
+
     }
 
 	private void handleAccept(SelectionKey key, Selector selector) throws IOException {
@@ -242,7 +293,7 @@ public class NioTelnetServer {
         channel.register(selector, SelectionKey.OP_READ, "some attach");
         channel.write(ByteBuffer.wrap("Hello user!\n".getBytes(StandardCharsets.UTF_8)));
         channel.write(ByteBuffer.wrap("Enter --help for support info\n".getBytes(StandardCharsets.UTF_8)));
-        String path = Path.of(startPath).toAbsolutePath().toString() + "\\: ";
+        String path = Path.of(startPath).toAbsolutePath() + "\\: ";
         channel.write(ByteBuffer.wrap(path.getBytes(StandardCharsets.UTF_8)));
     }
 
